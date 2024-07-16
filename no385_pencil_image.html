@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<!-- 週刊アスキー No.1499 2024/07/09 -->
+<!-- JavaScriptの部屋 第385回` -->
+<!-- 写真を鉛筆で書いた絵のように加工する -->
+<html>
+<head>
+<meta charset="UTF-8">
+<title>鉛筆タッチ加工</title>
+<script>
+let canvas, context, workCanvas, workContext;
+let [width, height] = [640, 640];
+const image = new Image();
+
+const gaussian = (x, y, s) => {
+    // ガウス関数
+    return 1 / (2 * Math.PI * s ** 2) * Math.exp(-(x ** 2 + y ** 2) / (2 * s ** 2));
+}
+
+const getNoise = () => {
+    // ノイズの作成
+    let noise = 0;
+    for (let i = 0; i < 16; i++) noise += Math.random();
+    return (noise - 8);
+}
+
+const saveImage = () => {
+    // 画像を名前をつけて保存（ダウンロード）
+    const filename = window.prompt("ファイル名を入力してください", "pencil.png");
+    if (filename != null) {
+        const a = document.createElement("a");
+        a.href = canvas.toDataURL("image/png");
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+}
+
+const init = () => {
+    // キャンバスの取得
+    canvas = document.getElementById("image");
+    context = canvas.getContext("2d", { willReadFrequently: true });
+    workCanvas = document.getElementById("work");
+    workContext = workCanvas.getContext("2d", { willReadFrequently: true });
+    [canvas.width, canvas.height] = [width, height];
+    document.getElementById("start").disabled = true;
+}
+
+const loadImage = files => {
+    // 画像の読み込み
+    if (files.length > 0) image.src = URL.createObjectURL(files[0]);
+    image.onload = () => {
+        // キャンバスサイズを変更（最大640）
+        [width, height] = [640, 640];
+        if (image.width > image.height) {
+            height = Math.floor(image.height * width / image.width);
+        } else {
+            width = Math.floor(image.width * height / image.height);
+        }
+        [canvas.width, canvas.height] = [width, height];
+        [workCanvas.width, workCanvas.height] = [width, height];
+        context.drawImage(image, 0, 0, width, height);
+        document.getElementById("start").disabled = false;
+    }
+}
+
+const startPencil = () => {
+    // 加工開始
+    document.getElementById("start").disabled = true;
+    document.getElementById("message").innerText = "加工中...";
+    setTimeout(pencil, 10);
+}
+
+const pencil = () => {
+    // 反転
+    context.globalCompositeOperation = "source-over";
+    context.drawImage(image, 0, 0, width, height);
+    const imageData = context.getImageData(0, 0, width, height);
+    const invertData = context.getImageData(0, 0, width, height);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+        let r = imageData.data[i];
+        let g = imageData.data[i + 1];
+        let b = imageData.data[i + 2];
+        if (document.getElementById("mono").checked) {
+            const mono = 0.299 * r + 0.587 * g + 0.114 * b;
+            imageData.data[i] = mono;
+            imageData.data[i + 1] = mono;
+            imageData.data[i + 2] = mono;
+        }
+        invertData.data[i] = 255 - imageData.data[i];
+        invertData.data[i + 1] = 255 - imageData.data[i + 1];
+        invertData.data[i + 2] = 255 - imageData.data[i + 2];
+    }
+    context.putImageData(imageData, 0, 0);
+    workContext.putImageData(invertData, 0, 0);
+    // ぼかし（ガウシアンフィルター）
+    const k = document.getElementById("K").value * 5;
+    let fsum = 0;
+    const filter = new Array(2 * k + 1);
+    for (let i = -k; i <= k; i++) {
+        filter[i + k] = new Array(2 * k + 1);
+        for (let j = -k; j <= k; j++) {
+            filter[i + k][j + k] = gaussian(i, j, k);
+            fsum += filter[i + k][j + k];
+        }
+    }
+    const blurData = workContext.getImageData(0, 0, width, height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let [r, g, b] = [0, 0, 0];
+            for (let i = -k; i <= k; i++) {
+                for (let j = -k; j <= k; j++) {
+                    const target = ((y + i) * width + (x + j)) * 4;
+                    const f = filter[i + k][j + k] / fsum;
+                    r += invertData.data[target] * f;
+                    g += invertData.data[target + 1] * f;
+                    b += invertData.data[target + 2] * f;
+                }
+            }
+            const index = (y * width + x) * 4;
+            blurData.data[index] = r;
+            blurData.data[index + 1] = g;
+            blurData.data[index + 2] = b;
+        }
+    }
+    workContext.putImageData(blurData, 0, 0);
+    // 反転した画像を合成
+    context.globalCompositeOperation = "color-dodge";
+    context.drawImage(workCanvas, 0, 0, width, height);
+    // 境界を消す
+    context.globalCompositeOperation = "source-over";
+    context.strokeStyle = "#FFFFFF";
+    context.lineWidth = 50;
+    context.strokeRect(0, 0, width, height);
+    // 斜線、ノイズの追加
+    workContext.fillStyle = "#808080";
+    workContext.fillRect(0, 0, width, height);
+    for (let i = 0; i < 2000; i++) {
+        const angle = Math.PI / 4 * 3 + Math.random() * Math.PI / 20;
+        const x1 = Math.random() * width;
+        const y1 = Math.random() * height;
+        const d = Math.random() * 100;
+        const x2 = x1 + d * Math.cos(angle);
+        const y2 = y1 + d * Math.sin(angle);
+        const c = Math.random() * 128 + 64;
+        workContext.strokeStyle = `rgb(${c},${c},${c})`;
+        workContext.lineWidth = Math.random() * 3;
+        workContext.beginPath();
+        workContext.moveTo(x1, y1);
+        workContext.lineTo(x2, y2);
+        workContext.stroke();
+    }
+    const noiseData = workContext.getImageData(0, 0, width, height);
+    for (let i = 0; i < noiseData.data.length; i += 4) {
+        const noise = getNoise() * 16;
+        for (let j = 0; j < 3; j++) noiseData.data[i + j] += noise;
+    }
+    workContext.putImageData(noiseData, 0, 0);
+    context.globalCompositeOperation = "overlay";
+    context.drawImage(workCanvas, 0, 0, width, height);
+    document.getElementById("start").disabled = false;
+    document.getElementById("message").innerText = "";
+}
+</script>
+<style>
+#message { color: #00C0C0; }
+canvas { border: thin solid #CCCCCC; }
+#work { display: none; }
+</style>
+</head>
+<body onload="init()">
+<p>鉛筆タッチ加工</p>
+<input type="file" accept="image/*" onchange="loadImage(this.files)">
+<input type="button" value="保存する" onclick="saveImage()"><hr>
+書き込み量：<input type="range" id="K" value="3" min="1" max="5">
+<input type="radio" name="mono_color" id="mono" checked>鉛筆
+<input type="radio" name="mono_color" id="color">色鉛筆
+<input type="button" id="start" value="加工する" onclick="startPencil()">
+<span id="message"></span><br>
+<canvas id="image"></canvas>
+<canvas id="work"></canvas>
+</body>
+</html>
