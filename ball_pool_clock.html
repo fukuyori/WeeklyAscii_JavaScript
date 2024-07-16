@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<!-- 週刊アスキー No.1500 2024/07/16 JavaScriptの部屋 -->
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ボールプール・クロック</title>
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+let canvas, context, engine;    // キャンバス、物理エンジン
+let balls = new Array();        // ボール
+let circles = new Array();      // 障害物
+let index, cIndex;              // インデックス（ボールの動き、障害物）
+const r = 8, num = 1200;        // ボールの半径、数
+
+// 障害物データ
+const circleData = [[[300, 150, 100]], [[150, 200, 50], [450, 100, 50], [300, 150, 80]],
+	[[200, 100, 50], [400, 100, 50], [100, 200, 50], [300, 200, 50], [500, 200, 50]]];
+
+const init = () => {
+// キャンバスの取得
+	canvas = document.getElementById("pool");
+	context = canvas.getContext("2d", {willReadFrequently: true});
+	// 物理エンジンの作成
+	engine = Matter.Engine.create({enableSleeping: true});
+	// プール、障害物の作成
+	const bottom = Matter.Bodies.rectangle(300, 590, 600, 20, {isStatic: true});
+	const left = Matter.Bodies.rectangle(10, 0, 20, 1200, {isStatic: true});
+	const right = Matter.Bodies.rectangle(590, 0, 20, 1200, {isStatic: true});
+	Matter.Composite.add(engine.world, [bottom, left, right]);
+	setCircles();
+}
+
+const setCircles = () => {
+	// 障害物の作成
+	Matter.Composite.remove(engine.world, circles);
+	circles = [];
+	cIndex = document.getElementById("circle").value;
+	for (const c of circleData[cIndex]) {
+	circles.push(Matter.Bodies.circle(c[0], c[1], c[2], {isStatic: true}));
+	}
+	Matter.Composite.add(engine.world, circles);
+	if (balls.length > 0) index = balls[0].pos.length - 1;
+	update();
+}
+
+const setBalls = async () => {
+	// ボタン、プルダウンの無効化
+	document.getElementById("start").disabled = true;
+	document.getElementById("circle").disabled = true;
+	// ボールを作成
+	Matter.Composite.clear(engine.world, true);
+	balls = [];
+	for (let i = 0; i < num; i++) {
+		const x = Math.random() * 400 + 100;
+		const y = Math.random() * 400 - 500;
+		const ball = Matter.Bodies.circle(x, y, r, {
+		isStatic: false,
+		friction: 0
+	});
+	Matter.Composite.add(engine.world, ball);
+	balls.push({object: ball, pos: [], color: `hsla(210, 100%, 80%, 0.5)`});
+	}
+	// ボールの動きを記録
+	let p = 0, cnt = 0;
+	while (p < 100) {
+		let [cnt1, cnt2] = [0, 0];
+		balls.forEach(ball => {
+			const {x, y} = ball.object.position;
+			ball.pos.push([x, y]);
+			if (y > 0) cnt1++;
+			if (ball.object.isSleeping) cnt2++;
+		});
+		p = Math.round((cnt1 + cnt2) / (balls.length * 2) * 100);
+		document.getElementById("progress").value = p;
+		document.getElementById("message").innerText = `${p}%`;
+		cnt++;
+		if (cnt % 10 == 0) await sleep(10);
+		Matter.Engine.update(engine);
+	}
+	// 時刻にあわせてボールの色を変更
+	context.clearRect(0, 0, canvas.width, canvas.height);
+	const now = new Date();
+	const hh = now.getHours().toString().padStart(2, "0");
+	const mm = now.getMinutes().toString().padStart(2, "0");
+	context.font = "bold 160px Verdana, sans-serif";
+	context.fillStyle = "#FF0000";
+	context.textAlign = "center";
+	context.textBaseline = "middle";
+	context.fillText(`${hh}:${mm}`, 300, 450);
+	const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+	balls.forEach(ball => {
+		const cx = Math.round(ball.object.position.x);
+		const cy = Math.round(ball.object.position.y);
+		let cnt = 0;
+		for (let y = cy - r; y < cy + r; y++) {
+			for (let x = cx - r; x < cx + r; x++) {
+				const i = (y * canvas.width + x) * 4;
+				if (imageData.data[i] > 0) cnt++;
+			}
+		}
+		if (cnt > (r * 2) ** 2 / 2) {
+			ball.color = `hsla(240, 100%, 50%, 0.8)`;
+		} else if (cnt > (r * 2) ** 2 / 8 * 3) {
+			ball.color = `hsla(230, 100%, 60%, 0.7)`;
+		} else if (cnt > (r * 2) ** 2 / 4) {
+			ball.color = `hsla(220, 100%, 70%, 0.6)`;
+		}
+	});
+		// 放出
+		document.getElementById("message").innerText += " 放出!!";
+		index = 0;
+		update();
+}
+
+const drawCircle = (x, y, r, color1, color2 = "#FFFFFF", w = 1) => {
+	// 円の描画
+	context.fillStyle = color1;
+	context.strokeStyle = color2;
+	context.lineWidth = w;
+	context.beginPath();
+	context.arc(x, y, r, 0, Math.PI * 2);
+	context.stroke();
+	context.fill();
+}
+
+const update = () => {
+	// ボールの描画
+	context.fillStyle = "#FFFFFF";
+	context.fillRect(0, 0, canvas.width, canvas.height);
+	balls.forEach(ball => {
+		const [x, y] = ball.pos[index];
+		drawCircle(x, y, r, ball.color);
+	});
+	// プール、障害物の描画
+	context.fillStyle = "#0000FF";
+	context.fillRect(0, 0, 20, canvas.height);
+	context.fillRect(canvas.width - 20, 0, 20, canvas.height);
+	context.fillRect(0, canvas.height - 20, canvas.width, 20);
+	for (const c of circleData[cIndex]) {
+		drawCircle(c[0], c[1], c[2], "#FFFFFF", "#0000FF", 10);
+	}
+	// 更新
+	index++;
+	if ((balls.length > 0) && (index < balls[0].pos.length)) {
+		window.requestAnimationFrame(update);
+	} else {
+		// 終了
+		document.getElementById("start").disabled = false;
+		document.getElementById("circle").disabled = false;
+	}
+}
+
+const sleep = t => {
+	// ミリ秒間スリープ
+	return new Promise(resolve => setTimeout(resolve, t));
+}
+</script>
+</head>
+<body onload="init()">
+<p>ボールプール・クロック</p>
+障害物：<select id="circle" onchange="setCircles()">
+<option value="0">1個</option>
+<option value="1">3個</option>
+<option value="2">5個</option>
+</select>
+<input type="button" id="start" value="ボールを注入" onclick="setBalls()">
+<progress id="progress" value="0" max="100"></progress>
+<span id="message"></span>
+<hr>
+<canvas id="pool" width="600" height="600"></canvas>
+</body>
+</html>
